@@ -1,0 +1,13 @@
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.env
+
+# 运行产物（样本图与模型已提交，便于续开发）
+output/
+
+# IDE / 本地计划
+.cursor/

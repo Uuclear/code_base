@@ -1,0 +1,6 @@
+torch>=2.0.0
+qreader>=3.16
+opencv-python-headless>=4.8.0
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
