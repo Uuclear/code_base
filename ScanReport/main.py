@@ -8,36 +8,92 @@ import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import requests
 
-from src.qr_decode import decode_image, get_qreader
+from src.decode_pipeline import decode_image_with_fallback
+from src.qr_decode import get_qreader
 from src.scrape_association import scrape_association
 from src.scrape_institute import scrape_institute
+from src.scrape_limis import create_limis_client, scrape_limis
 
 ROOT = Path(__file__).resolve().parent
+
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
+GLOB_PATTERNS = ("*.jpg", "*.jpeg", "*.png", "*.JPG", "*.JPEG", "*.PNG")
+
+
+def collect_images(inputs: list[Path]) -> tuple[list[Path], list[str]]:
+    """
+    Resolve -i paths: each may be a single image file or a directory of images.
+    Returns (images, errors for missing paths).
+    """
+    seen: set[Path] = set()
+    images: list[Path] = []
+    errors: list[str] = []
+
+    for raw in inputs:
+        path = raw.resolve()
+        if path.is_file():
+            if path.suffix.lower() not in IMAGE_SUFFIXES:
+                errors.append(f"not an image file: {path}")
+                continue
+            key = path.resolve()
+            if key not in seen:
+                seen.add(key)
+                images.append(path)
+        elif path.is_dir():
+            for pattern in GLOB_PATTERNS:
+                for p in sorted(path.glob(pattern)):
+                    key = p.resolve()
+                    if key not in seen:
+                        seen.add(key)
+                        images.append(p)
+        else:
+            errors.append(f"not found: {path}")
+
+    images.sort(key=lambda p: p.name.lower())
+    return images, errors
 
 
 def process_image(
     image_path: Path,
     weights_folder: Path,
     session: requests.Session,
+    limis_ctx: dict[str, Any],
+    *,
+    ocr_enabled: bool = True,
+    ocr_dir: Path | None = None,
+    limis_include_detail: bool = True,
 ) -> tuple[str, dict | None, str | None]:
     """
     Returns (status, result_dict, error_message).
     status: success | skipped | failed
     """
-    try:
-        decoded = decode_image(image_path, weights_folder)
-    except Exception as e:
-        return "failed", None, f"decode error: {e}"
-
+    decoded, err = decode_image_with_fallback(
+        image_path,
+        weights_folder,
+        ocr_enabled=ocr_enabled,
+        ocr_dir=ocr_dir,
+    )
     if decoded is None:
-        return "skipped", None, "no QR code"
+        return "skipped", None, err or "no QR code"
 
     try:
         if decoded.report_type == "association":
             result = scrape_association(decoded, session)
+        elif decoded.report_type == "limis":
+            if limis_ctx.get("client") is None:
+                limis_ctx["client"] = create_limis_client()
+                print("LIMIS: logging in (reuse session for batch)...", flush=True)
+                limis_ctx["client"].login()
+                limis_ctx["logins"] = 1
+            result = scrape_limis(
+                decoded,
+                client=limis_ctx["client"],
+                include_detail=limis_include_detail,
+            )
         elif decoded.report_type == "institute":
             result = scrape_institute(decoded, session)
         else:
@@ -60,7 +116,14 @@ def process_image(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="ScanReport QR pipeline")
-    parser.add_argument("--input", "-i", type=Path, default=ROOT / "report")
+    parser.add_argument(
+        "--input",
+        "-i",
+        action="append",
+        type=Path,
+        metavar="PATH",
+        help="Report image file or directory (repeatable). Default: ./report",
+    )
     parser.add_argument("--output", "-o", type=Path, default=ROOT / "output")
     parser.add_argument(
         "--weights",
@@ -74,42 +137,57 @@ def main() -> int:
         default=0,
         help="Max images to process (0 = all)",
     )
+    parser.add_argument(
+        "--no-ocr",
+        action="store_true",
+        help="Disable RapidOCR-json fallback when QR is missing",
+    )
+    parser.add_argument(
+        "--rapidocr",
+        type=Path,
+        default=None,
+        help="Path to RapidOCR-json folder (or set RAPID_OCR_JSON)",
+    )
+    parser.add_argument(
+        "--limis-slim",
+        action="store_true",
+        help="LIMIS OCR path: only match metadata, skip detail bundle",
+    )
     args = parser.parse_args()
 
-    input_dir = args.input.resolve()
+    input_paths = args.input if args.input else [ROOT / "report"]
     output_dir = args.output.resolve()
     weights_folder = args.weights.resolve()
 
-    if not input_dir.is_dir():
-        print(f"Input directory not found: {input_dir}", file=sys.stderr)
+    images, input_errors = collect_images(input_paths)
+    for msg in input_errors:
+        print(msg, file=sys.stderr)
+    if input_errors and not images:
         return 1
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    seen: set[Path] = set()
-    images: list[Path] = []
-    for pattern in ("*.jpg", "*.jpeg", "*.png", "*.JPG", "*.JPEG", "*.PNG"):
-        for p in sorted(input_dir.glob(pattern)):
-            key = p.resolve()
-            if key not in seen:
-                seen.add(key)
-                images.append(p)
     if args.limit > 0:
         images = images[: args.limit]
 
     if not images:
-        print(f"No images in {input_dir}", file=sys.stderr)
+        print(
+            f"No images under: {', '.join(str(p) for p in input_paths)}",
+            file=sys.stderr,
+        )
         return 1
 
     print(f"Initializing QReader (weights: {weights_folder})...")
     get_qreader(weights_folder)
 
     session = requests.Session()
+    limis_ctx: dict[str, Any] = {"client": None, "logins": 0}
     summary = {
         "processed_at": datetime.now(timezone.utc).isoformat(),
-        "input_dir": str(input_dir),
+        "input": [str(p.resolve()) for p in input_paths],
         "output_dir": str(output_dir),
         "total": len(images),
+        "limis_session_logins": 0,
         "success": [],
         "skipped": [],
         "failed": [],
@@ -118,7 +196,15 @@ def main() -> int:
     for image_path in images:
         name = image_path.name
         print(f"Processing {name}...", flush=True)
-        status, result, err = process_image(image_path, weights_folder, session)
+        status, result, err = process_image(
+            image_path,
+            weights_folder,
+            session,
+            limis_ctx,
+            ocr_enabled=not args.no_ocr,
+            ocr_dir=args.rapidocr,
+            limis_include_detail=not args.limis_slim,
+        )
 
         if status == "success" and result:
             out_file = output_dir / f"{image_path.stem}.json"
@@ -132,6 +218,8 @@ def main() -> int:
         else:
             summary["failed"].append({"image": name, "error": err or "unknown"})
             print(f"  FAIL: {err}")
+
+    summary["limis_session_logins"] = limis_ctx.get("logins", 0)
 
     summary_path = output_dir / "summary.json"
     with open(summary_path, "w", encoding="utf-8") as f:

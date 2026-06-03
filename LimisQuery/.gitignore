@@ -1,0 +1,12 @@
+output/
+__pycache__/
+*.pyc
+_probe*.py
+_*.html
+_*.py
+!query_report.py
+!limis_client.py
+*.html.json
+WaitBuild*.json
+[0-9]*-*.html.json
+_detail_full.html

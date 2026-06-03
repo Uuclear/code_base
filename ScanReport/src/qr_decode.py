@@ -10,7 +10,14 @@ from typing import Literal
 import cv2
 from qreader import QReader
 
-ReportType = Literal["association", "institute", "unknown"]
+from src.report_patterns import (
+    ASSOCIATION_REPORT_ALNUM,
+    PIPE_ASSOCIATION_PATTERN,
+    find_anti_fake_code,
+    find_association_report_no,
+)
+
+ReportType = Literal["association", "institute", "limis", "unknown"]
 
 ASSOCIATION_HOSTS = (
     "scetia.com",
@@ -18,13 +25,6 @@ ASSOCIATION_HOSTS = (
     "rptverify.scetia.com",
     "signboard.scetimis.com",
 )
-
-# Report number: HN01-202629448, HN1S-202600461, SJ02-202600988, LX3S-202600055, etc.
-REPORT_NO_PATTERN = re.compile(
-    r"([A-Z]{2,4}\d?[A-Z]?-\d{6,})",
-    re.IGNORECASE,
-)
-ANTI_FAKE_PATTERN = re.compile(r"(?:防伪校验码|校验码)[:：\s]*(\d{10,12})|(\d{12}|\d{10})")
 
 
 @dataclass
@@ -34,6 +34,8 @@ class DecodeResult:
     report_type: ReportType
     report_no: str | None = None
     anti_fake_code: str | None = None
+    decode_source: Literal["qr", "ocr"] = "qr"
+    ocr_text_preview: str | None = None
 
 
 _qreader: QReader | None = None
@@ -52,12 +54,12 @@ def get_qreader(weights_folder: Path | None = None) -> QReader:
 def _classify_qr_text(text: str) -> tuple[ReportType, str | None, str | None]:
     lower = text.lower()
     if any(host in lower for host in ASSOCIATION_HOSTS):
-        return "association", *_extract_params_from_text(text)
+        return "association", *_extract_association_params(text)
     if text.strip().lower().startswith(("http://", "https://")):
         if any(host in lower for host in ASSOCIATION_HOSTS):
             return "association", *_extract_params_from_url(text)
         return "institute", None, None
-    report_no, code = _extract_params_from_text(text)
+    report_no, code = _extract_association_params(text)
     if report_no or code:
         return "association", report_no, code
     return "unknown", None, None
@@ -76,40 +78,46 @@ def _extract_params_from_url(url: str) -> tuple[str | None, str | None]:
     )
     if report_no or code:
         return report_no, code
-    return _extract_params_from_text(url)
+    return _extract_association_params(url)
 
 
 def _parse_pipe_qr(text: str) -> tuple[str | None, str | None]:
+    m = PIPE_ASSOCIATION_PATTERN.search(text)
+    if m:
+        rn = m.group(1)
+        code = m.group(2)
+        if rn[0].isalpha():
+            rn = rn.upper()
+        return rn, code
     if "|" in text:
         parts = text.strip().split("|", 1)
         if len(parts) == 2:
             rn, code = parts[0].strip(), parts[1].strip()
-            if rn and code.isdigit() and len(code) in (10, 11, 12):
-                return rn, code
+            if rn and code.isdigit() and len(code) in (10, 12):
+                if ASSOCIATION_REPORT_ALNUM.fullmatch(rn) or re.fullmatch(r"\d{4,10}", rn):
+                    return (rn.upper() if rn[0].isalpha() else rn), code
     return None, None
 
 
-def _extract_params_from_text(text: str) -> tuple[str | None, str | None]:
-    report_no, code = _parse_pipe_qr(text)
-    if report_no and code:
-        return report_no, code
+def _extract_association_params(
+    text: str,
+    *,
+    allow_pipe_antifake: bool = True,
+) -> tuple[str | None, str | None]:
+    """QR/URL 可用 ``编号|防伪``；OCR 须 ``allow_pipe_antifake=False``。"""
+    if allow_pipe_antifake:
+        report_no, code = _parse_pipe_qr(text)
+        if report_no and code:
+            return report_no, code
 
-    report_no = None
-    m = REPORT_NO_PATTERN.search(text)
-    if m:
-        report_no = m.group(1)
-    code = None
-    for m in ANTI_FAKE_PATTERN.finditer(text):
-        code = m.group(1) or m.group(2)
-        if code and len(code) in (10, 11, 12):
-            break
-    if not code:
-        codes = re.findall(r"\b(\d{12}|\d{10})\b", text)
-        for c in codes:
-            if c and not c.startswith("20"):  # avoid dates
-                code = c
-                break
+    report_no = find_association_report_no(text, allow_pipe=allow_pipe_antifake)
+    code = find_anti_fake_code(text)
     return report_no, code
+
+
+def _extract_params_from_text(text: str) -> tuple[str | None, str | None]:
+    """Backward-compatible alias for association extraction."""
+    return _extract_association_params(text)
 
 
 def classify_from_qr_texts(qr_texts: list[str]) -> tuple[ReportType, str | None, str | None]:

@@ -18,13 +18,30 @@
 ```mermaid
 flowchart TD
     scan[扫描 report/*.jpg] --> qr[QReader detect_and_decode]
-    qr -->|无 QR| skip[跳过并记录]
-    qr -->|有 QR| classify{QR 内容分类}
-    classify -->|http URL 非 scetia| yuanwang[院网: numDecode + GetReportInfo]
-    classify -->|scetia 或 编号|防伪码| xiehui[协会: POST/GET 防伪查询]
+    qr -->|无 QR| ocr{RapidOCR-json 已配置?}
+    ocr -->|否| skip[跳过并记录]
+    ocr -->|是| regex[正则: 编号|防伪码 / URL / 内网编号]
+    regex -->|无法识别| skip
+    qr -->|有 QR| classify{内容分类}
+    regex --> classify
+    classify -->|http URL 非 scetia| yuanwang[院网: GetReportInfo]
+    classify -->|编号+防伪码| xiehui[协会: 防伪查询]
+    classify -->|仅内网编号| limis[LimisQuery 10.1.228.22]
     yuanwang --> json[output/*.json]
     xiehui --> json
+    limis --> json
 ```
+
+### OCR 回退（`src/rapidocr_client.py` + `src/text_extract.py`）
+
+- 依赖 [RapidOCR-json](https://github.com/hiroi-sora/RapidOCR-json) Windows 可执行包；环境变量 `RAPID_OCR_JSON` 或 `--rapidocr` 指向解压目录。
+- 编号规则集中定义于 `src/report_patterns.py`：
+  - **内网 / 院网（同一套）**：`[A-Z]{2,4}\d{0,4}[A-Z]?-\d{6,}`（如 `JG018-250187`）；院网另需 QR 内 jktac URL + `rId`。
+  - **协会报告编号**：`[A-Z]{2,4}…-\d{4,10}` 或标签后纯 `\d{4,10}`。
+  - **防伪码（OCR）**：仅「防伪校验码」标签后的 **10 或 12 位**数字；二维码仍为 `编号|10/12位`。
+  - **委托编号**（协会表单）：标签后纯数字 **4~6 位**（及 OCR 常见更长委托号）**不得**当作防伪码。
+- 识别优先级：`报告编号|防伪码` → 协会；`http` URL → 院网/协会；标签编号+防伪 → 协会；**仅**内网/院网样式报告号 → LIMIS（`scrape_limis.py`）。
+- **批处理内网**：`main.py` 对整批只 `login()` 一次，复用 `LimisClient.session`（Cookie）；`summary.json` 含 `limis_session_logins`。
 
 ## 院网（jktac）
 
@@ -64,7 +81,11 @@ ScanReport/
 │   ├── scrape_institute.py
 │   ├── scrape_association.py
 │   ├── parse_html.py
-│   └── parse_institute_api.py
+│   ├── parse_institute_api.py
+│   ├── rapidocr_client.py
+│   ├── text_extract.py
+│   ├── decode_pipeline.py
+│   └── scrape_limis.py
 ├── tests/
 └── output/                 # 运行产物（git 忽略）
 ```
@@ -82,6 +103,7 @@ pip install -r requirements.txt
 
 ```bash
 python main.py --input report --output output
+python main.py -i report/Test1..jpg -i report/test2.jpg -o output/test_run
 ```
 
 | 图片 | 预期 |

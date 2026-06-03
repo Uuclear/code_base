@@ -42,7 +42,32 @@ python main.py --input report --output output
 
 | 协会 | scetia 域名，或 `报告编号\|防伪校验码` 纯文本 | 按防伪码长度路由 POST/GET |
 
-无二维码的图片（如封面）会跳过。
+无二维码时，若已配置 [RapidOCR-json](https://github.com/hiroi-sora/RapidOCR-json)，会对图片 OCR，再用正则提取：
+
+| OCR 识别内容 | 后续动作 |
+|--------------|----------|
+| `报告编号\|防伪校验码`（如 `LX3S-202600055\|120707188344`） | 协会防伪查询（与 QR 相同） |
+| `http(s)://…jktac…` 院网 URL | 院网 `GetReportInfo` |
+| 仅内网格式报告编号（如 `JG018-250187`） | 内网 `10.1.228.22` LimisQuery（需 `LIMIS_*` 账号环境变量） |
+
+批处理多张内网报告时，`main.py` **整批只登录一次**，复用 Cookie；`summary.json` 中可看 `limis_session_logins`（应为 1）。
+
+```bash
+# 解压 RapidOCR-json 到 ScanReport/tools/RapidOCR-json 或设置环境变量
+set RAPID_OCR_JSON=C:\path\to\RapidOCR-json
+
+python main.py --input report --output output
+python main.py -i report/test2.jpg -o output          # 单张图片
+python main.py -i report/a.jpg -i report/b.jpg -o out  # 多张（-i 可重复）
+python main.py --input report --no-ocr          # 禁用 OCR 回退
+python main.py --input report --rapidocr C:\path\to\RapidOCR-json
+```
+
+仍无法识别则跳过（如纯封面、无文字）。
+
+## 与内网综合查询（LimisQuery）的对比
+
+内网 `http://10.1.228.22` 与本目录院网/协会二维码的**分列字段对照表**（部位≠标段、合同号≠费用、含 JSON 路径），见 **`../LimisQuery/README.md`** §「与二维码爬取（ScanReport）的字段对照（建库用）」。
 
 ## 目录结构
 
@@ -52,9 +77,14 @@ ScanReport/
 ├── requirements.txt
 ├── src/
 │   ├── qr_decode.py
+│   ├── decode_pipeline.py
+│   ├── rapidocr_client.py
+│   ├── text_extract.py
 │   ├── scrape_association.py
 │   ├── scrape_institute.py
+│   ├── scrape_limis.py
 │   └── parse_html.py
+│   tools/RapidOCR-json/   # 自行下载放置（见上）
 ├── docs/            # 开发文档
 ├── report/          # 样本图片（已入库）
 ├── output/          # 运行结果（git 忽略）
