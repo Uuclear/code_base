@@ -11,10 +11,9 @@ from core.contract_paths import FOLDER_PARENT_NONE, VALID_FOLDER_PARENTS
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 CODE_BASE = PACKAGE_ROOT.parent
-REPO_ROOT = CODE_BASE.parent
 SCAN_REPORT_ROOT = CODE_BASE / "ScanReport"
 DEFAULT_OCR = SCAN_REPORT_ROOT / "tools" / "RapidOCR-json"
-DEFAULT_CONTRACTS_XLSX = REPO_ROOT / "合同.xlsx"
+DEFAULT_CONTRACTS_XLSX = CODE_BASE / "合同.xlsx"
 
 SETTING_KEYS = [
     "limis_base",

@@ -19,4 +19,5 @@ python -m venv venv
 .\venv\Scripts\python.exe ReportDesk\app.py
 ```
 
-完整步骤、验证命令与 AI 代理检查清单见 **[ReportDesk/README.md](ReportDesk/README.md)**。
+完整步骤、验证命令与 AI 代理检查清单见 **[ReportDesk/README.md](ReportDesk/README.md)**。  
+合同工程表：**`合同.xlsx`**（仓库根目录，克隆即用）。

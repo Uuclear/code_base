@@ -55,9 +55,9 @@ class TestContracts(unittest.TestCase):
     def test_repo_import(self) -> None:
         from db.import_contracts import read_contract_rows
 
-        xlsx = Path(__file__).resolve().parents[1].parent.parent / "合同.xlsx"
+        xlsx = Path(__file__).resolve().parents[1].parent / "合同.xlsx"
         if not xlsx.is_file():
-            self.skipTest("合同.xlsx 不在仓库根目录")
+            self.skipTest("合同.xlsx 不在 code_base 根目录")
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "t.db"
             repo = Repository.open(str(db))

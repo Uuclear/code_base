@@ -15,7 +15,8 @@ from db.repository import Repository  # noqa: E402
 from gui.main_window import MainWindow  # noqa: E402
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
-DEFAULT_CONTRACTS_XLSX = PACKAGE_ROOT.parent.parent / "合同.xlsx"  # limis-api/合同.xlsx
+CODE_BASE = PACKAGE_ROOT.parent
+DEFAULT_CONTRACTS_XLSX = CODE_BASE / "合同.xlsx"
 
 
 def _bootstrap_contracts(repo: Repository) -> None:
@@ -29,6 +30,7 @@ def _bootstrap_contracts(repo: Repository) -> None:
     candidates = [
         Path(path) if path else None,
         DEFAULT_CONTRACTS_XLSX,
+        CODE_BASE.parent / "合同.xlsx",  # 兼容 limis-api/合同.xlsx 布局
         PACKAGE_ROOT / "data" / "合同.xlsx",
     ]
     for p in candidates:

@@ -108,7 +108,7 @@ if (-not (Test-Path $py)) {
 
 - 不要将 `ReportDesk/data/reportdesk.db`、`.env`、含密码的备份提交到 git。
 - 不要在后台线程首次 `import torch` / 加载 QReader；应用已在主线程预热。
-- 合同表 `合同.xlsx` **不在** git 仓库内，需用户单独提供或跳过合同功能。
+- 合同表默认路径为 `{REPO_ROOT}\合同.xlsx`（已随仓库提供，约 1 MB）。
 
 ---
 
@@ -134,7 +134,7 @@ ReportDesk 是 Windows 桌面工具，面向检测检验报告图片的批量整
 | Python | 3.10+（建议 3.12），含 **tcl/tk** |
 | 网络 | 协会/院网需外网；内网报告需能访问 LIMIS（默认 `http://10.1.228.22`） |
 | 磁盘 | 约 2–4 GB（venv + PyTorch CPU） |
-| 可选 | `合同.xlsx`（列：项目名称、负责人、经办人） |
+| 合同表 | 克隆后位于 `code_base/合同.xlsx`（列：项目名称、负责人、经办人） |
 
 ---
 
@@ -180,12 +180,11 @@ pip install -r ReportDesk\requirements.txt
 Get-ChildItem ScanReport\qrdet-*.pt
 ```
 
-### 4. 合同表（可选）
+### 4. 合同表
 
-`合同.xlsx` **不在** GitHub 仓库中。任选其一：
+克隆后自带 **`code_base/合同.xlsx`**（约 2.7 万行工程）。首次启动且数据库无合同时会自动导入。
 
-- 将文件放到 `code_base` 的上一级并命名为 `合同.xlsx`（即与 `code_base` 同级的 `limis-api/合同.xlsx` 布局），或
-- 启动应用 → **设置** → 选择 Excel → **导入合同表到数据库**
+也可在 **设置** 中更换 Excel 路径并 **导入合同表到数据库**。
 
 ### 5. 启动
 
@@ -336,6 +335,7 @@ cd code_base
 
 ```text
 code_base/                          ← REPO_ROOT（git 根）
+├── 合同.xlsx                       ← 工程/负责人/经办人（随仓库）
 ├── ScanReport/                     ← QR/OCR/爬取
 │   ├── qrdet-*.pt
 │   ├── tools/RapidOCR-json/        ← 需自行下载
