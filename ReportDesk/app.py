@@ -3,8 +3,15 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
+
+# 降低 torch/OpenMP 与 Tk 同进程时的多线程冲突（Windows GIL 崩溃）
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
@@ -52,9 +59,15 @@ def main() -> None:
     if not repo.get_setting("organize_folder_parent"):
         repo.set_setting("organize_folder_parent", "无")
 
-    _bootstrap_contracts(repo)
-
     app = MainWindow(repo)
+
+    def _deferred_bootstrap() -> None:
+        try:
+            _bootstrap_contracts(repo)
+        except Exception:
+            pass
+
+    app.after(200, _deferred_bootstrap)
     app.mainloop()
 
 

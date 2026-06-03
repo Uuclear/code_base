@@ -6,7 +6,6 @@ import os
 import queue
 import subprocess
 import sys
-import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -66,8 +65,9 @@ class OrganizeTab(ttk.Frame):
         self._pipeline_stats = {"success": 0, "failed": 0, "skipped": 0}
 
         self._ml_queue: queue.Queue = queue.Queue()
-        self._models_ready = threading.Event()
-        threading.Thread(target=self._ml_worker_loop, daemon=True).start()
+        self._models_ready = False
+        self._ml_pump_running = False
+        self._bulk_adding = False
 
         self.mode_var = tk.StringVar(value="sequential")
         self.worker_count_var = tk.IntVar(value=int(repo.get_setting("batch_workers") or "6"))
@@ -134,7 +134,8 @@ class OrganizeTab(ttk.Frame):
 
         self.listbox = tk.Listbox(left, selectmode=tk.EXTENDED, exportselection=False)
         self.listbox.pack(fill=tk.BOTH, expand=True)
-        self.listbox.bind("<<ListboxSelect>>", self._on_list_select)
+        self._listbox_select_event = "<<ListboxSelect>>"
+        self.listbox.bind(self._listbox_select_event, self._on_list_select)
 
         # —— 中间：预览 ——
         center = ttk.LabelFrame(main_paned, text="报告预览", padding=4)
@@ -204,82 +205,90 @@ class OrganizeTab(ttk.Frame):
             fill=tk.X, padx=6, pady=(0, 6)
         )
         self._on_mode_change()
-        self.after(400, self._warmup_models_on_main)
+        self.after(
+            100,
+            lambda: self._append_log("整理页 v3：拖入仅加列表；QR 模型在首次识别时加载"),
+        )
 
-    def _warmup_models_on_main(self) -> None:
-        """PyTorch/QReader 必须在主线程首次加载（Windows 上后台 import 易触发 GIL 崩溃）。"""
+    def _suspend_list_select(self) -> None:
+        self.listbox.unbind(self._listbox_select_event)
+
+    def _resume_list_select(self) -> None:
+        self.listbox.bind(self._listbox_select_event, self._on_list_select)
+
+    def _ensure_models_ready(self) -> bool:
+        """首次识别时在主线程加载 PyTorch/QReader（拖入文件不触发）。"""
+        if self._models_ready:
+            return True
         prev = self.status_var.get()
         self.status_var.set("正在加载 QR 识别模型…")
         self.update_idletasks()
         try:
             self._get_pipeline().ensure_qreader()
+            self._models_ready = True
             self._append_log("QR 识别模型已就绪")
+            self.status_var.set(prev if prev and "加载 QR" not in prev else "就绪")
+            return True
         except Exception as e:
             self._append_log(f"QR 模型加载失败: {e}")
-        finally:
-            self._models_ready.set()
-            if "加载 QR" in self.status_var.get():
-                self.status_var.set(prev if prev else "就绪 — 可拖入图片或文件夹")
+            self.status_var.set("QR 模型未加载")
+            return False
 
-    def _ml_worker_loop(self) -> None:
-        """单线程执行解码/爬取，且仅在主线程完成模型预热后运行。"""
-        while True:
-            job = self._ml_queue.get()
-            if job is None:
-                continue
-            self._models_ready.wait()
-            if job[0] == "scrape":
-                _, path, pipeline, settings, fields, decoded = job
-                try:
-                    pl = self._get_pipeline()
-                    if decoded is None:
-                        from core.qr_input import build_decode_from_fields
+    def _schedule_ml_pump(self) -> None:
+        """解码/爬取仅在 Tk 主线程执行，避免 Windows 上 torch+后台线程 GIL 崩溃。"""
+        if self._ml_pump_running:
+            return
+        self._ml_pump_running = True
+        self.after(0, self._ml_pump_on_main)
 
-                        decoded = build_decode_from_fields(path.name, fields)
-                    result = pl.scrape_decoded(
-                        decoded,
-                        limis_base=settings.get("limis_base"),
-                        limis_user=settings.get("limis_user"),
-                        limis_password=settings.get("limis_password"),
-                        limis_auth_type=settings.get("limis_auth_type") or "1",
-                        report_no=fields.get("report_no") or None,
-                        anti_fake_code=fields.get("anti_fake_code") or None,
-                    )
-                    self.after(
-                        0,
-                        lambda r=result, pl=pipeline: self._apply_scrape(r, pipeline=pl),
-                    )
-                except Exception as e:
-                    self.after(
-                        0,
-                        lambda err=e, p=path, pl=pipeline: self._on_scrape_worker_error(
-                            p, str(err), pl
-                        ),
-                    )
-                continue
-            path, pipeline = job
+    def _ml_pump_on_main(self) -> None:
+        self._ml_pump_running = False
+        try:
+            job = self._ml_queue.get_nowait()
+        except queue.Empty:
+            return
+        if not self._ensure_models_ready():
+            self._ml_queue.put(job)
+            return
+        try:
+            self._run_ml_job(job)
+        except Exception as e:
+            self._append_log(f"任务异常: {e}")
+        if not self._ml_queue.empty():
+            self._schedule_ml_pump()
+
+    def _run_ml_job(self, job) -> None:
+        if job[0] == "scrape":
+            _, path, pipeline, settings, fields, decoded = job
             try:
-                if pipeline:
-                    self.after(
-                        0,
-                        lambda: self._update_pipeline_ui(
-                            f"[{self._pipeline_done_count + 1}/{self._pipeline_total}] OCR/QR 识别…"
-                        ),
-                    )
-                outcome = self._get_pipeline().decode_image(path)
-                self.after(
-                    0,
-                    lambda o=outcome, p=path, pl=pipeline: self._apply_decode(
-                        o, p, pipeline=pl
-                    ),
+                pl = self._get_pipeline()
+                if decoded is None:
+                    from core.qr_input import build_decode_from_fields
+
+                    decoded = build_decode_from_fields(path.name, fields)
+                result = pl.scrape_decoded(
+                    decoded,
+                    limis_base=settings.get("limis_base"),
+                    limis_user=settings.get("limis_user"),
+                    limis_password=settings.get("limis_password"),
+                    limis_auth_type=settings.get("limis_auth_type") or "1",
+                    report_no=fields.get("report_no") or None,
+                    anti_fake_code=fields.get("anti_fake_code") or None,
                 )
+                self._apply_scrape(result, pipeline=pipeline)
             except Exception as e:
-                self.after(
-                    0,
-                    lambda err=e, p=path, pl=pipeline: self._handle_decode_error(
-                        p, str(err), pl
-                    ),
+                self._on_scrape_worker_error(path, str(e), pipeline)
+            return
+        path, pipeline = job
+        try:
+            if pipeline:
+                self._update_pipeline_ui(
+                    f"[{self._pipeline_done_count + 1}/{self._pipeline_total}] OCR/QR 识别…"
                 )
+            outcome = self._get_pipeline().decode_image(path)
+            self._apply_decode(outcome, path, pipeline=pipeline)
+        except Exception as e:
+            self._handle_decode_error(path, str(e), pipeline)
 
     def _on_scrape_worker_error(self, path: Path, err: str, pipeline: bool) -> None:
         self._busy = False
@@ -299,7 +308,9 @@ class OrganizeTab(ttk.Frame):
     def _setup_dnd(self) -> None:
         # 只注册一次，避免同一次拖放触发两次 _add_paths
         ok = hook_dropfiles(self.winfo_toplevel(), self._add_paths)
-        if not ok:
+        if ok:
+            self._append_log("拖放已启用（主线程队列模式）")
+        else:
             self._append_log("提示：安装 windnd 后可拖放添加（pip install windnd）")
 
     def _on_mode_change(self) -> None:
@@ -343,23 +354,49 @@ class OrganizeTab(ttk.Frame):
             )
         return self._pipeline
 
+    def _end_bulk_add(self, *, added: int | None = None) -> None:
+        self.listbox.selection_clear(0, tk.END)
+        self._bulk_adding = False
+        self._resume_list_select()
+        if added is not None and added > 0:
+            self.status_var.set(
+                f"已添加 {added} 个文件，共 {len(self._paths)} 个"
+                " — 点击列表项预览，或「开始流水线」"
+            )
+        elif added == 0:
+            self.status_var.set(f"共 {len(self._paths)} 个文件（无新图片）")
+
     def _add_paths(self, paths: list[Path]) -> None:
         if not paths:
             return
-        paths = collect_image_paths(paths)
-        seen = {p.resolve() for p in self._paths}
-        to_add: list[Path] = []
-        for p in paths:
-            if p.suffix.lower() not in IMAGE_SUFFIXES:
-                continue
-            key = p.resolve()
-            if key not in seen:
-                seen.add(key)
-                to_add.append(p)
-        if not to_add:
-            return
-        self._paths.extend(to_add)
-        self._append_listbox_chunk(to_add, 0)
+        self._bulk_adding = True
+        self._suspend_list_select()
+        self.status_var.set("正在扫描图片…")
+        self.update_idletasks()
+        self.after_idle(lambda p=list(paths): self._add_paths_impl(p))
+
+    def _add_paths_impl(self, paths: list[Path]) -> None:
+        try:
+            paths = collect_image_paths(paths)
+            seen = {p.resolve() for p in self._paths}
+            to_add: list[Path] = []
+            for p in paths:
+                if p.suffix.lower() not in IMAGE_SUFFIXES:
+                    continue
+                key = p.resolve()
+                if key not in seen:
+                    seen.add(key)
+                    to_add.append(p)
+            if not to_add:
+                self._end_bulk_add(added=0)
+                return
+            self._paths.extend(to_add)
+            self._append_listbox_chunk(to_add, 0)
+        except Exception as e:
+            self._bulk_adding = False
+            self._resume_list_select()
+            self._append_log(f"添加文件失败: {e}")
+            self.status_var.set("添加失败")
 
     def _append_listbox_chunk(self, items: list[Path], start: int, *, chunk: int = 80) -> None:
         end = min(start + chunk, len(items))
@@ -368,11 +405,7 @@ class OrganizeTab(ttk.Frame):
         if end < len(items):
             self.after(1, lambda: self._append_listbox_chunk(items, end, chunk=chunk))
             return
-        added = len(items)
-        self.status_var.set(
-            f"已添加 {added} 个文件，共 {len(self._paths)} 个"
-            " — 点击列表项预览，或「开始流水线」"
-        )
+        self._end_bulk_add(added=len(items))
 
     def _add_files(self) -> None:
         files = filedialog.askopenfilenames(
@@ -415,7 +448,7 @@ class OrganizeTab(ttk.Frame):
         self.preview_label.config(image="", text="无预览")
 
     def _on_list_select(self, _evt=None) -> None:
-        if self._pipeline_auto or self.mode_var.get() != "sequential" or self._busy:
+        if self._bulk_adding or self._pipeline_auto or self.mode_var.get() != "sequential" or self._busy:
             return
         sel = self.listbox.curselection()
         if not sel:
@@ -437,6 +470,7 @@ class OrganizeTab(ttk.Frame):
         self._show_image(path)
         self._busy = True
         self._ml_queue.put((path, pipeline))
+        self._schedule_ml_pump()
 
     def _show_image(self, path: Path) -> None:
         self._photo_ref = show_image_on_label(
@@ -546,6 +580,7 @@ class OrganizeTab(ttk.Frame):
                 self._decoded,
             )
         )
+        self._schedule_ml_pump()
 
     def _apply_scrape(self, result: ProcessResult, *, pipeline: bool = False) -> None:
         self._busy = False

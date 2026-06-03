@@ -5,12 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-try:
-    from PIL import Image, ImageTk
-except ImportError:
-    Image = None  # type: ignore
-    ImageTk = None  # type: ignore
-
 
 def resolve_image_path(path: Path | str | None) -> Path | None:
     """解析并确认图片文件存在。"""
@@ -49,7 +43,9 @@ def show_image_on_label(
             hint = f"文件不存在:\n{path}"
         label.config(image="", text=hint)
         return None
-    if Image is None or ImageTk is None:
+    try:
+        from PIL import Image, ImageTk
+    except ImportError:
         label.config(image="", text=str(resolved))
         return None
     try:

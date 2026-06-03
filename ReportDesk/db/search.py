@@ -34,11 +34,13 @@ def search_reports(
     report_no: str = "",
     project_name: str = "",
     sample_name: str = "",
+    manager: str = "",
+    handler: str = "",
     date_from: str = "",
     date_to: str = "",
     limit: int = 300,
 ) -> list[dict[str, Any]]:
-    """模糊查询 reports + samples + tasks，日期区间在 Python 侧过滤。"""
+    """模糊查询 reports + samples + tasks + 合同负责人/经办人，日期区间在 Python 侧过滤。"""
     clauses = ["1=1"]
     params: list[Any] = []
 
@@ -73,6 +75,16 @@ def search_reports(
         )
         params.extend([p, p])
 
+    if manager.strip():
+        p = f"%{manager.strip()}%"
+        clauses.append("pc.manager LIKE ?")
+        params.append(p)
+
+    if handler.strip():
+        p = f"%{handler.strip()}%"
+        clauses.append("pc.handler LIKE ?")
+        params.append(p)
+
     where = " AND ".join(clauses)
     sql = f"""
         SELECT
@@ -82,6 +94,8 @@ def search_reports(
             r.report_date,
             r.source_channel,
             r.scrape_status,
+            pc.manager,
+            pc.handler,
             (
                 SELECT GROUP_CONCAT(DISTINCT x.sn)
                 FROM (
@@ -98,6 +112,7 @@ def search_reports(
                 ORDER BY f.file_index LIMIT 1
             ) AS preview_path
         FROM reports r
+        LEFT JOIN project_contracts pc ON pc.project_name = r.project_name
         WHERE {where}
         ORDER BY r.updated_at DESC
         LIMIT ?

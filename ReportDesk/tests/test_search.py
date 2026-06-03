@@ -37,6 +37,35 @@ class TestSearch(unittest.TestCase):
             self.assertEqual(rows[0]["report_no"], "HX188-260007")
             repo.close()
 
+    def test_manager_handler_from_contracts(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            db = Path(td) / "t.db"
+            repo = Repository(get_connection(str(db)))
+            repo.upsert_report(
+                {
+                    "report_no": "HX188-260008",
+                    "source_channel": "limis",
+                    "project_name": "虹桥枢纽工程",
+                    "report_date": "2026-02-01",
+                }
+            )
+            repo.replace_project_contracts(
+                [
+                    {
+                        "project_name": "虹桥枢纽工程",
+                        "manager": "王经理",
+                        "handler": "李经办",
+                    }
+                ]
+            )
+            rows = repo.search_reports(manager="王经")
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["manager"], "王经理")
+            self.assertEqual(rows[0]["handler"], "李经办")
+            rows2 = repo.search_reports(handler="李经")
+            self.assertEqual(len(rows2), 1)
+            repo.close()
+
 
 if __name__ == "__main__":
     unittest.main()

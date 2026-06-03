@@ -320,7 +320,7 @@ cd code_base
 
 | 现象 | 处理 |
 |------|------|
-| 批量拖入闪退 `PyEval_RestoreThread` / GIL | 使用最新代码；等 **QR 识别模型已就绪** 后再大批量拖入 |
+| 批量拖入闪退 `PyEval_RestoreThread` / GIL | 使用 v3 拖放（windnd 仅入队、主线程轮询）；日志应有「拖放已启用（主线程队列模式）」；勿用旧版后台 ML 线程 |
 | 无法拖放 | `pip install windnd`；仅 Windows |
 | `No module named tkinter` | 重装 Python 并勾选 tcl/tk |
 | torch 安装慢/失败 | 使用 CPU 索引 URL；或配置 pip 镜像 |

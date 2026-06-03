@@ -99,6 +99,14 @@ class ReportPipeline:
 
     def ensure_qreader(self) -> None:
         if not self._qreader_ready:
+            try:
+                import torch
+
+                torch.set_num_threads(1)
+                if hasattr(torch, "set_num_interop_threads"):
+                    torch.set_num_interop_threads(1)
+            except ImportError:
+                pass
             self._get_qreader(self.weights_folder)
             self._qreader_ready = True
 
