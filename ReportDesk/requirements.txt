@@ -1,0 +1,11 @@
+# ReportDesk — reuse code_base/venv with ScanReport + LimisQuery
+requests>=2.31.0
+torch>=2.0.0
+qreader>=3.16
+opencv-python-headless>=4.8.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+Pillow>=10.0.0
+tkcalendar>=1.6.1
+openpyxl>=3.1.0
+windnd>=1.0.7; sys_platform == "win32"
