@@ -36,16 +36,18 @@ flowchart TD
 
 ## 协会（scetia）
 
-| 防伪校验码 | Endpoint | 方法 |
+| 防伪校验码 | 数据通道 | 实现 |
 |------------|----------|------|
-| 12 位，非 0 开头，非 3001 前缀 | `scetia.com/.../AntiFakeReportQuery.aspx` | POST |
-| 10 位 | `scetimis.com/QueryReport/SearchQueryReport.aspx` | POST |
-| 12 位 0 开头 / 11 位 | `rptverify.scetia.com/checkreport/` | GET |
-| 12 位 3001 前缀 | `signboard.scetimis.com/checkreport` | GET |
+| 12 位，非 0 开头，非 3001 前缀 | ASP.NET HTML 表 | `AntiFakeReportQuery.aspx` POST → `parse_html.py` |
+| 10 位 | ASP.NET HTML | `scetimis.com/QueryReport/SearchQueryReport.aspx` POST |
+| 12 位 0 开头 / 11 位 | **JSON API** | `POST rptverify-service.scetia.com/api/rptAuthVerify/checkReport`，body `{no, checkCode}`，成功返回 `data.reportUrl`（PDF） |
+| 12 位 3001 前缀 | **JSON API** | `POST signboard-service.scetimis.com/api/user/checkReport`，同上 |
 
-QR 文本常见格式：`HN01-202629448|110807184827` 或 `HN1S-202600461|120807188600`。
+QR 文本常见格式：`HN01-202629448|110807184827`（走 HTML）或 `HN1S-202600461|120807188600`（若码规则命中 Vue 线路则走 JSON）。
 
-实现：`src/scrape_association.py`。
+`report/` 当前样本均为 **material_html**（12 位 1 开头防伪码）；JSON 两路在 `src/parse_association_api.py` + `scrape_association.resolve_association_backend()` 中已接入。
+
+输出 JSON 的 `query.backend` 取值：`material_html` | `scetimis_html` | `rptverify_json` | `signboard_json`。
 
 ## 目录与模块
 
@@ -103,8 +105,32 @@ python main.py --input report --output output
 }
 ```
 
+## 验证层级（协会 JSON 两路）
+
+| 层级 | 是否需要真实报告 | 当前状态 |
+|------|------------------|----------|
+| 路由 | 否 | `tests/test_association_backend.py`：按防伪码长度/前缀选 `material_html` / `rptverify_json` / `signboard_json` |
+| 契约 | 否 | 自 `CheckReport.*.js` 确认：POST body `{no, checkCode}`；成功 `resultCode/code==200` 且 `data.reportUrl` |
+| 联调（失败路径） | 否 | 用现有 HN01 码调 JSON API 得 `400`/`60025`，说明**参数形状对、码不属于该系统**（符合预期） |
+| 联调（成功路径） | **是** | 需 `0` 开头 12 位或 `3001` 前缀的真实 QR；`report/` 样本均为 `1` 开头 12 位，只能验 HTML 路 |
+| 流水线 Mock | 否 | `tests/test_association_json_mock.py`：Mock API 响应，验 `scrape_association` 分支与 `report_pdf_url` 输出 |
+
+有真实 Vue 线路二维码后，在 `ScanReport` 目录执行：
+
+```bash
+python -c "
+from src.qr_decode import DecodeResult
+from src.scrape_association import scrape_association
+import json
+d = DecodeResult('x.jpg', ['报告编号|防伪码'], 'association', '报告编号', '防伪码')
+print(json.dumps(scrape_association(d), ensure_ascii=False, indent=2))
+"
+```
+
+成功时应见 `query.backend` 为 `rptverify_json` 或 `signboard_json`，且含可打开的 `report_pdf_url`。
+
 ## 风险与后续
 
 - 院网 API 可能 500 超时，已实现重试；解码 ID 失败时回退原始 `rId`。
-- 协会 `samples` 表格解析可加强选择器。
+- 协会 JSON 成功路径未经真实样本端到端确认；拿到对应二维码后按上表最后一行补验即可。
 - 大文件：`qrdet-*.pt` 与 `report/*.jpg` 已纳入版本库，克隆后可直接开发。
