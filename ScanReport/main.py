@@ -65,6 +65,8 @@ def process_image(
     *,
     ocr_enabled: bool = True,
     ocr_dir: Path | None = None,
+    paddleocr_dir: Path | None = None,
+    ocr_engine: str | None = "auto",
     limis_include_detail: bool = True,
 ) -> tuple[str, dict | None, str | None]:
     """
@@ -76,6 +78,8 @@ def process_image(
         weights_folder,
         ocr_enabled=ocr_enabled,
         ocr_dir=ocr_dir,
+        paddleocr_dir=paddleocr_dir,
+        ocr_engine=ocr_engine,
     )
     if decoded is None:
         return "skipped", None, err or "no QR code"
@@ -140,13 +144,25 @@ def main() -> int:
     parser.add_argument(
         "--no-ocr",
         action="store_true",
-        help="Disable RapidOCR-json fallback when QR is missing",
+        help="Disable OCR fallback when QR is missing",
     )
     parser.add_argument(
         "--rapidocr",
         type=Path,
         default=None,
         help="Path to RapidOCR-json folder (or set RAPID_OCR_JSON)",
+    )
+    parser.add_argument(
+        "--paddleocr",
+        type=Path,
+        default=None,
+        help="Path to PaddleOCR-json folder (or set PADDLE_OCR_JSON)",
+    )
+    parser.add_argument(
+        "--ocr-engine",
+        choices=("auto", "rapidocr", "paddleocr"),
+        default="auto",
+        help="OCR engine when QR missing (default: auto)",
     )
     parser.add_argument(
         "--limis-slim",
@@ -203,6 +219,8 @@ def main() -> int:
             limis_ctx,
             ocr_enabled=not args.no_ocr,
             ocr_dir=args.rapidocr,
+            paddleocr_dir=args.paddleocr,
+            ocr_engine=args.ocr_engine,
             limis_include_detail=not args.limis_slim,
         )
 

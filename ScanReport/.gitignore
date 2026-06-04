@@ -9,8 +9,9 @@ __pycache__/
 # 运行产物（样本图与模型已提交，便于续开发）
 output/
 
-# RapidOCR-json 发行包（体积大，本地解压到 tools/ 或 RAPID_OCR_JSON）
+# OCR-json 发行包（体积大，本地解压到 tools/ 或环境变量）
 tools/RapidOCR-json/
+tools/PaddleOCR-json/
 
 # IDE / 本地计划
 .cursor/

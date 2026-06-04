@@ -72,6 +72,8 @@ class ReportPipeline:
         *,
         weights_folder: Path | None = None,
         ocr_dir: Path | None = None,
+        paddleocr_dir: Path | None = None,
+        ocr_engine: str | None = "auto",
         ocr_enabled: bool = True,
         limis_client: Any | None = None,
         http_session: requests.Session | None = None,
@@ -90,6 +92,8 @@ class ReportPipeline:
 
         self.weights_folder = weights_folder or SCAN_REPORT_ROOT
         self.ocr_dir = ocr_dir
+        self.paddleocr_dir = paddleocr_dir
+        self.ocr_engine = ocr_engine or "auto"
         self.ocr_enabled = ocr_enabled
         self.limis_client = limis_client
         self.http_session = http_session or requests.Session()
@@ -129,6 +133,8 @@ class ReportPipeline:
                 self.weights_folder,
                 ocr_enabled=self.ocr_enabled,
                 ocr_dir=self.ocr_dir,
+                paddleocr_dir=self.paddleocr_dir,
+                ocr_engine=self.ocr_engine,
             )
         except Exception as e:
             return DecodeOutcome("failed", name, error=f"decode error: {e}")
@@ -284,6 +290,8 @@ class ReportPipeline:
                 self.weights_folder,
                 ocr_enabled=self.ocr_enabled,
                 ocr_dir=self.ocr_dir,
+                paddleocr_dir=self.paddleocr_dir,
+                ocr_engine=self.ocr_engine,
             )
         except Exception as e:
             return ProcessResult("failed", name, error=f"decode error: {e}")

@@ -17,10 +17,13 @@ def _init_pool(settings: dict[str, str | None]) -> None:
     from .pipeline import ReportPipeline
 
     ocr_dir = settings.get("rapidocr_dir")
+    paddle_dir = settings.get("paddleocr_dir")
     weights = settings.get("scanreport_weights_dir")
     _pipeline = ReportPipeline(
         weights_folder=Path(weights) if weights else None,
         ocr_dir=Path(ocr_dir) if ocr_dir else None,
+        paddleocr_dir=Path(paddle_dir) if paddle_dir else None,
+        ocr_engine=settings.get("ocr_engine") or "auto",
         ocr_enabled=True,
     )
     if settings.get("limis_user") and settings.get("limis_base"):
