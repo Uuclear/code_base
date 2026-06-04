@@ -77,14 +77,12 @@ class ReportPipeline:
         http_session: requests.Session | None = None,
     ) -> None:
         _ensure_scanreport_path()
-        from src.decode_pipeline import decode_image_with_fallback  # type: ignore
-        from src.qr_decode import get_qreader  # type: ignore
         from src.scrape_association import scrape_association  # type: ignore
         from src.scrape_institute import scrape_institute  # type: ignore
         from src.scrape_limis import create_limis_client, scrape_limis  # type: ignore
 
-        self._decode = decode_image_with_fallback
-        self._get_qreader = get_qreader
+        self._decode = None
+        self._get_qreader = None
         self._scrape_association = scrape_association
         self._scrape_institute = scrape_institute
         self._scrape_limis = scrape_limis
@@ -97,7 +95,17 @@ class ReportPipeline:
         self.http_session = http_session or requests.Session()
         self._qreader_ready = False
 
+    def _ensure_decode_deps(self) -> None:
+        if self._decode is not None:
+            return
+        from src.decode_pipeline import decode_image_with_fallback  # type: ignore
+        from src.qr_decode import get_qreader  # type: ignore
+
+        self._decode = decode_image_with_fallback
+        self._get_qreader = get_qreader
+
     def ensure_qreader(self) -> None:
+        self._ensure_decode_deps()
         if not self._qreader_ready:
             try:
                 import torch
@@ -112,6 +120,7 @@ class ReportPipeline:
 
     def decode_image(self, image_path: Path) -> DecodeOutcome:
         """仅解码（QR/OCR），不爬取。"""
+        self._ensure_decode_deps()
         self.ensure_qreader()
         name = image_path.name
         try:
