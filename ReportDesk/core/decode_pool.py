@@ -13,6 +13,8 @@ def get_decode_executor(settings: dict[str, str | None]) -> ProcessPoolExecutor:
     global _executor, _settings_key
     key = tuple(sorted((k, settings.get(k)) for k in (
         "rapidocr_dir",
+        "paddleocr_dir",
+        "ocr_engine",
         "scanreport_weights_dir",
         "limis_base",
         "limis_user",

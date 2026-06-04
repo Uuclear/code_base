@@ -118,7 +118,7 @@ ReportDesk 是 Windows 桌面工具，面向检测检验报告图片的批量整
 
 | 能力 | 说明 |
 |------|------|
-| 识别 | QR（QReader/torch）+ 可选 RapidOCR |
+| 识别 | QR（QReader/torch）+ OCR 回退（RapidOCR-json / PaddleOCR-json） |
 | 爬取 | 协会、院网、内网 LIMIS（逻辑复用 ScanReport，不重复实现） |
 | 入库 | SQLite，支持查询、排序、预览 |
 | 归档 | 按工程名、标段、报告编号复制到规范目录 |
@@ -171,7 +171,8 @@ pip install -r ReportDesk\requirements.txt
 | 资源 | 路径 | 说明 |
 |------|------|------|
 | QR 权重 | `ScanReport\qrdet-*.pt` | 克隆后通常已有 |
-| RapidOCR-json | `ScanReport\tools\RapidOCR-json\` | [下载](https://github.com/hiroi-sora/RapidOCR-json) 解压；无二维码图片需 OCR 时必填 |
+| RapidOCR-json | `ScanReport\tools\RapidOCR-json\` | [RapidOCR-json](https://github.com/hiroi-sora/RapidOCR-json)（Windows） |
+| PaddleOCR-json | `ScanReport\tools\PaddleOCR-json\` | [PaddleOCR-json](https://github.com/hiroi-sora/PaddleOCR-json)（Win/Linux，需 AVX CPU） |
 | 样例图片 | `ScanReport\report\*.jpg` | 用于测试 |
 
 验证权重：
@@ -207,7 +208,9 @@ cd code_base
 | LIMIS 用户名 | `limis_user` | 内网账号 |
 | LIMIS 密码 | `limis_password` | 仅存本地 DB，明文 v1 |
 | authType | `limis_auth_type` | `1` |
+| OCR 引擎 | `ocr_engine` | `auto` / `rapidocr` / `paddleocr` |
 | RapidOCR 目录 | `rapidocr_dir` | `ScanReport\tools\RapidOCR-json` |
+| PaddleOCR 目录 | `paddleocr_dir` | `ScanReport\tools\PaddleOCR-json` |
 | QR 权重目录 | `scanreport_weights_dir` | `ScanReport\` |
 | 输出根目录 | `output_root` | **必填**，整理后文件复制目标 |
 | 数据库路径 | `db_path` | `ReportDesk\data\reportdesk.db` |
@@ -300,6 +303,7 @@ cd code_base
 | `LIMIS_PASSWORD` | 密码 |
 | `LIMIS_AUTH_TYPE` | 默认 `1` |
 | `RAPID_OCR_JSON` | RapidOCR-json 目录 |
+| `PADDLE_OCR_JSON` | PaddleOCR-json 目录 |
 | `REPORTDESK_DB` | 数据库文件绝对路径 |
 
 ---

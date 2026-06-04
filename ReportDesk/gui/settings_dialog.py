@@ -12,15 +12,26 @@ from core.contract_paths import FOLDER_PARENT_NONE, VALID_FOLDER_PARENTS
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 CODE_BASE = PACKAGE_ROOT.parent
 SCAN_REPORT_ROOT = CODE_BASE / "ScanReport"
-DEFAULT_OCR = SCAN_REPORT_ROOT / "tools" / "RapidOCR-json"
+DEFAULT_RAPIDOCR = SCAN_REPORT_ROOT / "tools" / "RapidOCR-json"
+DEFAULT_PADDLEOCR = SCAN_REPORT_ROOT / "tools" / "PaddleOCR-json"
 DEFAULT_CONTRACTS_XLSX = CODE_BASE / "合同.xlsx"
+
+OCR_ENGINE_CHOICES = [
+    ("auto", "自动（Windows 优先 RapidOCR，否则 PaddleOCR）"),
+    ("rapidocr", "RapidOCR-json（仅 Windows）"),
+    ("paddleocr", "PaddleOCR-json（Windows / Linux）"),
+]
+OCR_ENGINE_LABEL_TO_VALUE = {label: val for val, label in OCR_ENGINE_CHOICES}
+OCR_ENGINE_VALUE_TO_LABEL = {val: label for val, label in OCR_ENGINE_CHOICES}
 
 SETTING_KEYS = [
     "limis_base",
     "limis_user",
     "limis_password",
     "limis_auth_type",
+    "ocr_engine",
     "rapidocr_dir",
+    "paddleocr_dir",
     "scanreport_weights_dir",
     "output_root",
     "db_path",
@@ -47,7 +58,9 @@ class SettingsDialog(tk.Toplevel):
             ("LIMIS 用户名", "limis_user", False, False),
             ("LIMIS 密码", "limis_password", True, False),
             ("authType", "limis_auth_type", False, False),
+            ("OCR 引擎", "ocr_engine", False, False),
             ("RapidOCR 目录", "rapidocr_dir", False, True),
+            ("PaddleOCR 目录", "paddleocr_dir", False, True),
             ("ScanReport 权重目录", "scanreport_weights_dir", False, True),
             ("输出根目录", "output_root", False, True),
             ("数据库路径", "db_path", False, True),
@@ -55,7 +68,9 @@ class SettingsDialog(tk.Toplevel):
         defaults = {
             "limis_base": "http://10.1.228.22",
             "limis_auth_type": "1",
-            "rapidocr_dir": str(DEFAULT_OCR) if DEFAULT_OCR.is_dir() else "",
+            "ocr_engine": "auto",
+            "rapidocr_dir": str(DEFAULT_RAPIDOCR) if DEFAULT_RAPIDOCR.is_dir() else "",
+            "paddleocr_dir": str(DEFAULT_PADDLEOCR) if DEFAULT_PADDLEOCR.is_dir() else "",
             "scanreport_weights_dir": str(SCAN_REPORT_ROOT),
             "db_path": str(PACKAGE_ROOT / "data" / "reportdesk.db"),
             "organize_folder_parent": FOLDER_PARENT_NONE,
@@ -66,15 +81,37 @@ class SettingsDialog(tk.Toplevel):
         r = 0
         for label, key, secret, browse in rows:
             ttk.Label(frm, text=label).grid(row=r, column=0, sticky="w", pady=2)
-            v = tk.StringVar(value=self.repo.get_setting(key) or defaults.get(key, ""))
-            self.vars[key] = v
-            ent = ttk.Entry(frm, textvariable=v, width=48, show="*" if secret else "")
-            ent.grid(row=r, column=1, sticky="ew", padx=4)
-            if browse:
-                ttk.Button(frm, text="浏览…", command=lambda k=key: self._browse(k)).grid(
-                    row=r, column=2
+            stored = self.repo.get_setting(key) or defaults.get(key, "")
+            if key == "ocr_engine":
+                v = tk.StringVar(
+                    value=OCR_ENGINE_VALUE_TO_LABEL.get(stored, OCR_ENGINE_VALUE_TO_LABEL["auto"])
                 )
+                self.vars[key] = v
+                cb = ttk.Combobox(
+                    frm,
+                    textvariable=v,
+                    values=[label for _, label in OCR_ENGINE_CHOICES],
+                    state="readonly",
+                    width=46,
+                )
+                cb.grid(row=r, column=1, sticky="ew", padx=4)
+            else:
+                v = tk.StringVar(value=stored)
+                self.vars[key] = v
+                ent = ttk.Entry(frm, textvariable=v, width=48, show="*" if secret else "")
+                ent.grid(row=r, column=1, sticky="ew", padx=4)
+                if browse:
+                    ttk.Button(frm, text="浏览…", command=lambda k=key: self._browse(k)).grid(
+                        row=r, column=2
+                    )
             r += 1
+
+        ttk.Label(
+            frm,
+            text="无二维码时 OCR 回退；PaddleOCR 见 https://github.com/hiroi-sora/PaddleOCR-json",
+            foreground="gray",
+        ).grid(row=r, column=0, columnspan=3, sticky="w", pady=(0, 4))
+        r += 1
 
         ttk.Separator(frm, orient=tk.HORIZONTAL).grid(
             row=r, column=0, columnspan=3, sticky="ew", pady=8
@@ -186,6 +223,9 @@ class SettingsDialog(tk.Toplevel):
             )
             return
         for key in SETTING_KEYS:
-            self.repo.set_setting(key, self.vars[key].get().strip() or None)
+            val = self.vars[key].get().strip()
+            if key == "ocr_engine":
+                val = OCR_ENGINE_LABEL_TO_VALUE.get(val, "auto")
+            self.repo.set_setting(key, val or None)
         self.on_saved()
         self.destroy()

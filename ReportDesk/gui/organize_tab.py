@@ -397,10 +397,13 @@ class OrganizeTab(ttk.Frame):
         if self._pipeline is None:
             settings = self._settings_dict()
             ocr_dir = settings.get("rapidocr_dir")
+            paddle_dir = settings.get("paddleocr_dir")
             weights = settings.get("scanreport_weights_dir")
             self._pipeline = ReportPipeline(
                 weights_folder=Path(weights) if weights else None,
                 ocr_dir=Path(ocr_dir) if ocr_dir else None,
+                paddleocr_dir=Path(paddle_dir) if paddle_dir else None,
+                ocr_engine=settings.get("ocr_engine") or "auto",
                 ocr_enabled=True,
             )
         return self._pipeline

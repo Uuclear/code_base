@@ -42,7 +42,12 @@ python main.py --input report --output output
 
 | 协会 | scetia 域名，或 `报告编号\|防伪校验码` 纯文本 | 按防伪码长度路由 POST/GET |
 
-无二维码时，若已配置 [RapidOCR-json](https://github.com/hiroi-sora/RapidOCR-json)，会对图片 OCR，再用正则提取：
+无二维码时，若已配置 OCR 引擎，会对图片 OCR，再用正则提取：
+
+- [RapidOCR-json](https://github.com/hiroi-sora/RapidOCR-json)（主要 Windows）
+- [PaddleOCR-json](https://github.com/hiroi-sora/PaddleOCR-json)（Windows / Linux，CPU 需 AVX）
+
+设置 `RAPID_OCR_JSON` / `PADDLE_OCR_JSON`，或在 ReportDesk 设置中选择 **OCR 引擎**。
 
 | OCR 识别内容 | 后续动作 |
 |--------------|----------|
@@ -53,10 +58,12 @@ python main.py --input report --output output
 批处理多张内网报告时，`main.py` **整批只登录一次**，复用 Cookie；`summary.json` 中可看 `limis_session_logins`（应为 1）。
 
 ```bash
-# 解压 RapidOCR-json 到 ScanReport/tools/RapidOCR-json 或设置环境变量
+# 解压 RapidOCR-json 或 PaddleOCR-json 到 ScanReport/tools/ 或设置环境变量
 set RAPID_OCR_JSON=C:\path\to\RapidOCR-json
+set PADDLE_OCR_JSON=C:\path\to\PaddleOCR-json
 
 python main.py --input report --output output
+python main.py -i report/test2.jpg -o output --ocr-engine paddleocr
 python main.py -i report/test2.jpg -o output          # 单张图片
 python main.py -i report/a.jpg -i report/b.jpg -o out  # 多张（-i 可重复）
 python main.py --input report --no-ocr          # 禁用 OCR 回退
