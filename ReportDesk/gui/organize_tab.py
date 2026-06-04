@@ -6,6 +6,7 @@ import os
 import queue
 import subprocess
 import sys
+import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -13,6 +14,8 @@ from tkinter import filedialog, messagebox, ttk
 from db.repository import Repository
 
 from core.batch_worker import BatchWorker
+from core.decode_pool import submit_decode
+from core.decode_worker import dict_to_decode_outcome
 from gui.image_preview import show_image_on_label
 from core.field_map import (
     FIELD_KEYS,
@@ -65,9 +68,11 @@ class OrganizeTab(ttk.Frame):
         self._pipeline_stats = {"success": 0, "failed": 0, "skipped": 0}
 
         self._ml_queue: queue.Queue = queue.Queue()
-        self._models_ready = False
         self._ml_pump_running = False
         self._bulk_adding = False
+        self._decode_future = None
+        self._decode_ctx: tuple[Path, bool] | None = None
+        self._async_ml_busy = False
 
         self.mode_var = tk.StringVar(value="sequential")
         self.worker_count_var = tk.IntVar(value=int(repo.get_setting("batch_workers") or "6"))
@@ -207,7 +212,7 @@ class OrganizeTab(ttk.Frame):
         self._on_mode_change()
         self.after(
             100,
-            lambda: self._append_log("整理页 v3：拖入仅加列表；QR 模型在首次识别时加载"),
+            lambda: self._append_log("整理页 v4：识别在子进程执行，界面保持响应"),
         )
 
     def _suspend_list_select(self) -> None:
@@ -216,26 +221,8 @@ class OrganizeTab(ttk.Frame):
     def _resume_list_select(self) -> None:
         self.listbox.bind(self._listbox_select_event, self._on_list_select)
 
-    def _ensure_models_ready(self) -> bool:
-        """首次识别时在主线程加载 PyTorch/QReader（拖入文件不触发）。"""
-        if self._models_ready:
-            return True
-        prev = self.status_var.get()
-        self.status_var.set("正在加载 QR 识别模型…")
-        self.update_idletasks()
-        try:
-            self._get_pipeline().ensure_qreader()
-            self._models_ready = True
-            self._append_log("QR 识别模型已就绪")
-            self.status_var.set(prev if prev and "加载 QR" not in prev else "就绪")
-            return True
-        except Exception as e:
-            self._append_log(f"QR 模型加载失败: {e}")
-            self.status_var.set("QR 模型未加载")
-            return False
-
     def _schedule_ml_pump(self) -> None:
-        """解码/爬取仅在 Tk 主线程执行，避免 Windows 上 torch+后台线程 GIL 崩溃。"""
+        """解码走子进程；爬取走后台线程，主线程只刷新 UI。"""
         if self._ml_pump_running:
             return
         self._ml_pump_running = True
@@ -243,31 +230,84 @@ class OrganizeTab(ttk.Frame):
 
     def _ml_pump_on_main(self) -> None:
         self._ml_pump_running = False
+        if self._decode_future is not None:
+            self._poll_decode_future()
+            return
+        if self._async_ml_busy:
+            self.after(50, self._schedule_ml_pump)
+            return
         try:
             job = self._ml_queue.get_nowait()
         except queue.Empty:
-            return
-        if not self._ensure_models_ready():
-            self._ml_queue.put(job)
             return
         try:
             self._run_ml_job(job)
         except Exception as e:
             self._append_log(f"任务异常: {e}")
+        if (
+            self._decode_future is None
+            and not self._async_ml_busy
+            and not self._ml_queue.empty()
+        ):
+            self._schedule_ml_pump()
+
+    def _begin_decode_subprocess(self, path: Path, pipeline: bool) -> None:
+        self.status_var.set(f"识别中: {path.name}…")
+        if pipeline:
+            self._update_pipeline_ui(
+                f"[{self._pipeline_done_count + 1}/{self._pipeline_total}] OCR/QR 识别…"
+            )
+        self.update_idletasks()
+        self._decode_ctx = (path, pipeline)
+        self._decode_future = submit_decode(self._settings_dict(), str(path.resolve()))
+        self.after(50, self._poll_decode_future)
+
+    def _poll_decode_future(self) -> None:
+        if self._decode_future is None or self._decode_ctx is None:
+            return
+        if not self._decode_future.done():
+            self.after(50, self._poll_decode_future)
+            return
+        path, pipeline = self._decode_ctx
+        fut = self._decode_future
+        self._decode_future = None
+        self._decode_ctx = None
+        try:
+            outcome = dict_to_decode_outcome(fut.result())
+            self._apply_decode(outcome, path, pipeline=pipeline)
+        except Exception as e:
+            self._handle_decode_error(path, str(e), pipeline)
         if not self._ml_queue.empty():
             self._schedule_ml_pump()
 
     def _run_ml_job(self, job) -> None:
         if job[0] == "scrape":
             _, path, pipeline, settings, fields, decoded = job
+            self._run_scrape_in_thread(path, pipeline, settings, fields, decoded)
+            return
+        path, pipeline = job
+        self._begin_decode_subprocess(path, pipeline)
+
+    def _run_scrape_in_thread(
+        self,
+        path: Path,
+        pipeline: bool,
+        settings: dict,
+        fields: dict,
+        decoded,
+    ) -> None:
+        self._async_ml_busy = True
+
+        def work() -> None:
             try:
                 pl = self._get_pipeline()
-                if decoded is None:
+                dec = decoded
+                if dec is None:
                     from core.qr_input import build_decode_from_fields
 
-                    decoded = build_decode_from_fields(path.name, fields)
+                    dec = build_decode_from_fields(path.name, fields)
                 result = pl.scrape_decoded(
-                    decoded,
+                    dec,
                     limis_base=settings.get("limis_base"),
                     limis_user=settings.get("limis_user"),
                     limis_password=settings.get("limis_password"),
@@ -275,20 +315,31 @@ class OrganizeTab(ttk.Frame):
                     report_no=fields.get("report_no") or None,
                     anti_fake_code=fields.get("anti_fake_code") or None,
                 )
-                self._apply_scrape(result, pipeline=pipeline)
-            except Exception as e:
-                self._on_scrape_worker_error(path, str(e), pipeline)
-            return
-        path, pipeline = job
-        try:
-            if pipeline:
-                self._update_pipeline_ui(
-                    f"[{self._pipeline_done_count + 1}/{self._pipeline_total}] OCR/QR 识别…"
+                self.after(
+                    0,
+                    lambda r=result, pl=pipeline: self._finish_scrape_async(r, pl),
                 )
-            outcome = self._get_pipeline().decode_image(path)
-            self._apply_decode(outcome, path, pipeline=pipeline)
-        except Exception as e:
-            self._handle_decode_error(path, str(e), pipeline)
+            except Exception as e:
+                self.after(
+                    0,
+                    lambda err=e, p=path, pl=pipeline: self._finish_scrape_async_error(
+                        p, str(err), pl
+                    ),
+                )
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _finish_scrape_async(self, result: ProcessResult, pipeline: bool) -> None:
+        self._async_ml_busy = False
+        self._apply_scrape(result, pipeline=pipeline)
+        if not self._ml_queue.empty():
+            self._schedule_ml_pump()
+
+    def _finish_scrape_async_error(self, path: Path, err: str, pipeline: bool) -> None:
+        self._async_ml_busy = False
+        self._on_scrape_worker_error(path, err, pipeline)
+        if not self._ml_queue.empty():
+            self._schedule_ml_pump()
 
     def _on_scrape_worker_error(self, path: Path, err: str, pipeline: bool) -> None:
         self._busy = False
